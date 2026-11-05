@@ -1,0 +1,10 @@
+# Terraform: estado (contiene la contraseña generada) y binarios
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfplan
+terraform/terraform.tfvars
+# Python
+.venv/
+__pycache__/
+.pytest_cache/

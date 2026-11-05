@@ -1,0 +1,20 @@
+# Copia este archivo a terraform.tfvars y ajusta lo que necesites. No contiene secretos:
+# las contraseñas las genera Terraform y quedan en Secrets Manager.
+
+aws_region   = "us-east-1"
+project_name = "de-dw"
+
+# Vacío = tu IP pública actual. Si cambia tu IP, vuelve a ejecutar `terraform apply`.
+allowed_cidr = ""
+
+ec2_instance_type    = "t3.large"
+rds_instance_class   = "db.t4g.micro"
+docdb_instance_class = "db.t3.medium"
+
+redshift_base_capacity         = 8
+redshift_daily_rpu_hours_limit = 24
+redshift_usage_breach_action   = "deactivate"
+
+# Fase 2 (después de la primera corrida del pipeline y de activar QuickSight en la consola):
+enable_quicksight   = false
+quicksight_user_arn = "" # arn:aws:quicksight:us-east-1:<ACCOUNT_ID>:user/default/<USUARIO>

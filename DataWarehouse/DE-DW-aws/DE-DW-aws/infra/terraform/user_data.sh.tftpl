@@ -1,0 +1,29 @@
+#!/bin/bash
+# Arranque de la EC2: instala Docker y AWS CLI, descarga el código desde S3 y delega en
+# scripts/aws/ec2_bootstrap.sh. Log completo: /var/log/de-dw-bootstrap.log
+set -euxo pipefail
+exec > >(tee -a /var/log/de-dw-bootstrap.log) 2>&1
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y docker.io docker-compose-v2 unzip jq curl
+systemctl enable --now docker
+usermod -aG docker ubuntu
+
+curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+unzip -q -o /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install --update
+
+cat > /etc/de-dw.env <<'EOF'
+AWS_REGION=${aws_region}
+DE_DW_BUCKET=${bucket}
+DE_DW_CODE_KEY=${code_key}
+DE_DW_SECRET_ID=${secret_id}
+EOF
+
+mkdir -p /opt/de-dw
+aws s3 cp "s3://${bucket}/${code_key}" /tmp/de-dw.zip --region "${aws_region}"
+unzip -o -q /tmp/de-dw.zip -d /opt/de-dw
+# Si el código se empaquetó con saltos de línea de Windows (\r), los scripts no se ejecutan.
+find /opt/de-dw -type f \( -name '*.sh' -o -name '*.py' -o -name '*.yml' -o -name '*.sql' -o -name '*.tftpl' -o -name 'Dockerfile' \) -exec sed -i 's/\r$//' {} +
+bash /opt/de-dw/scripts/aws/ec2_bootstrap.sh

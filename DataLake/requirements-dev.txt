@@ -1,0 +1,7 @@
+boto3>=1.34
+requests>=2.31
+defusedxml>=0.7
+pyyaml>=6.0
+pyarrow>=14
+moto[s3,glue]>=5.1
+pytest>=8.0

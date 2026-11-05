@@ -1,0 +1,49 @@
+# Configuración de fuentes RSS (punto 4.1.2)
+# Solo URLs de feeds. La página del directorio (https://www.eltiempo.com/rss) NO es un feed.
+# `source_id` se usa como valor de partición: bronze/source=<source_id>/...
+sources:
+  - source_id: eltiempo_medio_ambiente
+    medio: El Tiempo
+    seccion: Medio Ambiente
+    url: https://www.eltiempo.com/rss/vida_medio-ambiente.xml
+    enabled: true
+
+  - source_id: eltiempo_ciencia
+    medio: El Tiempo
+    seccion: Ciencia
+    url: https://www.eltiempo.com/rss/vida_ciencia.xml
+    enabled: true
+
+  - source_id: eltiempo_viajar
+    medio: El Tiempo
+    seccion: Viajar
+    url: https://www.eltiempo.com/rss/vida_viajar.xml
+    enabled: true
+
+  # Fuente inexistente para demostrar el estado PARTIAL (fallo de una fuente).
+  # Póngala en true solo durante esa demostración y vuelva a false después.
+  - source_id: eltiempo_fuente_caida
+    medio: El Tiempo
+    seccion: Demo fuente caida
+    url: https://www.eltiempo.com/rss/esta_seccion_no_existe.xml
+    enabled: false
+
+http:
+  timeout_seconds: 20
+  max_retries: 3            # reintentos ante 429/5xx/errores de red
+  backoff_factor: 2         # 2s, 4s, 8s
+  user_agent: "news-datalake/1.0 (proyecto academico)"
+
+silver:
+  lookback_days: 7          # manifiestos Bronze revisados en cada ejecución incremental
+  future_tolerance_hours: 24
+  entity_types: [PERSON, ORGANIZATION, LOCATION]
+
+comprehend:
+  enabled: true
+  supported_languages: [es, en]   # idiomas contemplados; otros -> SKIPPED_UNSUPPORTED_LANGUAGE
+  default_language: es            # se usa si la detección de idioma no es confiable
+  min_language_score: 0.5
+  max_text_bytes: 4900            # el servicio acepta máx. 5 KB por documento
+  min_text_chars: 3               # menos -> SKIPPED_EMPTY
+  max_documents_per_run: 2000     # tope de costo; el excedente queda PENDING_QUOTA

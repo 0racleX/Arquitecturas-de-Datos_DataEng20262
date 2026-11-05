@@ -1,0 +1,36 @@
+digraph G {
+  rankdir=TB; newrank=true; nodesep=0.35; ranksep=0.45;
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, color="#2b6cb0", fillcolor="#ebf4ff"];
+  edge [fontname="Helvetica", fontsize=9, color="#4a5568"];
+
+  rss [label="Fuentes RSS · El Tiempo\nMedio Ambiente · Ciencia · Viajar", fillcolor="#fefcbf", color="#b7791f"];
+  subgraph cluster_ec2 { label="Amazon EC2 (t3.medium) · Airflow 2.10 LocalExecutor + PostgreSQL"; style="rounded,dashed"; color="#718096"; fontname="Helvetica"; fontsize=10;
+    dag [label="DAG news_datalake_pipeline\n1 validate_environment → 2 extract_source ×3 →\n3 silver_clean_validate_dedup → 4 silver_enrich_comprehend →\n5 silver_publish → 6 gold_build → 7 glue_update_catalog →\n8 athena_validate → 9 record_status", fillcolor="#e6fffa", color="#2c7a7b"];
+  }
+  subgraph cluster_s3 { label="Amazon S3 · un solo bucket privado (cifrado, versionado, solo HTTPS)"; style="rounded"; color="#2b6cb0"; fontname="Helvetica"; fontsize=10;
+    bronze [label="bronze/\nsource=/ingestion_date=/run_id=/feed.xml\nXML original + hash", shape=cylinder, fillcolor="#fbd38d", color="#975a16"];
+    silver [label="silver/ (Parquet)\nnews · news_entities · news_key_phrases\npub_date=AAAA-MM-DD/v=<run>/\n+ news_history · nlp_analysis", shape=cylinder, fillcolor="#e2e8f0", color="#4a5568"];
+    gold [label="gold/ (Parquet)\nnews_daily · entity_daily · key_phrase_section_daily\npub_date=AAAA-MM-DD/v=<run>/", shape=cylinder, fillcolor="#faf089", color="#975a16"];
+    quarantine [label="quarantine/\nrespuestas inválidas + registros rechazados", shape=cylinder, fillcolor="#fed7d7", color="#c53030"];
+    control [label="control/\nmanifiestos · punteros de commit · batch log\nestado de ejecuciones · validaciones", shape=cylinder, fillcolor="#f7fafc"];
+  }
+  comprehend [label="Amazon Comprehend\nidioma · entidades · frases clave", fillcolor="#faf5ff", color="#6b46c1"];
+  glue [label="AWS Glue Data Catalog\nnews_datalake: tablas, esquemas, particiones", fillcolor="#faf5ff", color="#6b46c1"];
+  athena [label="Amazon Athena\nworkgroup news-datalake · consultas SQL", fillcolor="#faf5ff", color="#6b46c1"];
+  tf [label="Terraform\n(toda la infraestructura)", shape=note, fillcolor="#f0fff4", color="#2f855a"];
+
+  rss -> bronze [label=" extracción HTTP"];
+  dag -> rss [style=dashed, label=" consulta"];
+  dag -> bronze [style=dashed, label=" ingesta"];
+  bronze -> silver [label=" limpieza, validación,\n deduplicación"];
+  bronze -> quarantine [style=dotted];
+  dag -> comprehend [style=dashed, label=" invoca (solo textos nuevos)"];
+  comprehend -> silver [style=dotted, label=" resultados"];
+  silver -> gold [label=" agregaciones"];
+  dag -> control [style=dashed];
+  dag -> glue [style=dashed, label=" registra particiones"];
+  glue -> athena [label=" metadatos"];
+  silver -> athena; gold -> athena; quarantine -> athena; control -> athena;
+  dag -> athena [style=dashed, label=" validaciones finales"];
+  tf -> dag [style=dotted, arrowhead=none];
+}

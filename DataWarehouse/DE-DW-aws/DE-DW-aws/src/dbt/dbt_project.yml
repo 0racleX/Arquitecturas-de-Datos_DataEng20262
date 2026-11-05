@@ -1,0 +1,47 @@
+name: ecommerce_dw
+version: '2.0.0'
+config-version: 2
+profile: ecommerce_dw
+
+model-paths: ["models"]
+test-paths: ["tests"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  ecommerce_dw:
+    intermediate:
+      +schema: intermediate
+      +materialized: view
+      # Vistas late-binding: Redshift no las invalida cuando dbt reconstruye las tablas de las que dependen.
+      +bind: false
+    quarantine:
+      +schema: quarantine
+      +materialized: table
+    marts:
+      +schema: marts
+      +materialized: table
+
+snapshots:
+  ecommerce_dw:
+    +schema: snapshots
+
+vars:
+  valid_sales_channels: ['web', 'móvil', 'tienda']
+  valid_event_types: ['vista_producto', 'busqueda', 'agregar_carrito']
+  business_timezone: 'America/Bogota'
+  date_dimension_start: '2025-01-01'
+  date_dimension_end: '2028-01-01'  # fin exclusivo, compatible con dbt_utils.date_spine
+  incremental_lookback_days: 7  # días recientes que se reprocesan para absorber datos tardíos
+
+seeds:
+  ecommerce_dw:
+    +schema: intermediate
+    colombia_holidays:
+      +column_types:
+        date: date
+        holiday_name: varchar(256)
+    colombia_municipalities:
+      +column_types:
+        country: varchar(128)
+        department: varchar(256)
+        city: varchar(256)

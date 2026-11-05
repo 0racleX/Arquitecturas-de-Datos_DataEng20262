@@ -1,0 +1,97 @@
+name: de-dw
+
+# Se ejecuta en la EC2. Las fuentes (RDS, DocumentDB) y el warehouse (Redshift) son
+# servicios administrados; aquí solo corren Airflow y su base de metadatos.
+# Las variables vienen de /opt/de-dw/.env, generado desde Secrets Manager.
+
+services:
+  # PostgreSQL guarda solo los metadatos de Airflow, no datos del negocio.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Run scripts/aws/render_env.sh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/aws/render_env.sh}
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  airflow-init:
+    image: local/ecommerce-airflow-aws:2.11.2
+    build:
+      context: ./docker
+    environment: &airflow-environment
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?Run scripts/aws/render_env.sh}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?Run scripts/aws/render_env.sh}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+      PYTHONPATH: /opt/airflow/src
+      AWS_REGION: ${AWS_REGION}
+      AWS_DEFAULT_REGION: ${AWS_REGION}
+      DE_DW_BUCKET: ${DE_DW_BUCKET}
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ecommerce}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MONGODB_URI: ${MONGODB_URI}
+      MONGO_DATABASE: ${MONGO_DATABASE:-ecommerce}
+      REDSHIFT_HOST: ${REDSHIFT_HOST}
+      REDSHIFT_PORT: ${REDSHIFT_PORT:-5439}
+      REDSHIFT_DATABASE: ${REDSHIFT_DATABASE}
+      REDSHIFT_USER: ${REDSHIFT_USER}
+      REDSHIFT_PASSWORD: ${REDSHIFT_PASSWORD}
+      REDSHIFT_IAM_ROLE_ARN: ${REDSHIFT_IAM_ROLE_ARN}
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?Run scripts/aws/render_env.sh}
+    user: "${AIRFLOW_UID:-1000}:0"
+    volumes: &airflow-volumes
+      - ./src/airflow/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - airflow_logs:/opt/airflow/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: version
+
+  airflow-webserver:
+    image: local/ecommerce-airflow-aws:2.11.2
+    build:
+      context: ./docker
+    command: webserver
+    environment: *airflow-environment
+    user: "${AIRFLOW_UID:-1000}:0"
+    volumes: *airflow-volumes
+    ports:
+      - "${AIRFLOW_UI_PORT:-8080}:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  airflow-scheduler:
+    image: local/ecommerce-airflow-aws:2.11.2
+    build:
+      context: ./docker
+    command: scheduler
+    environment: *airflow-environment
+    user: "${AIRFLOW_UID:-1000}:0"
+    volumes: *airflow-volumes
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  airflow_logs:
+  postgres_data:

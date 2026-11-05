@@ -1,0 +1,8 @@
+aws_region    = "us-east-1"
+project       = "news-datalake"
+instance_type = "t3.medium"
+
+# Deje vacío para no abrir puertos y usar Session Manager (recomendado).
+# Para abrir la UI solo a su IP: ["181.x.x.x/32"]
+allowed_cidrs = []
+# key_name    = "mi-keypair"

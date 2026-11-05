@@ -1,0 +1,109 @@
+#!/bin/bash
+# Bootstrap de Airflow ${airflow_version} en Amazon Linux 2023 (LocalExecutor + PostgreSQL local).
+# Log: /var/log/user-data.log
+set -euxo pipefail
+exec > >(tee /var/log/user-data.log) 2>&1
+
+BUCKET="${bucket}"
+REGION="${region}"
+AIRFLOW_HOME=/opt/airflow
+PIPELINE_HOME=/opt/news-datalake
+
+dnf install -y python3.11 python3.11-pip postgresql15-server gcc python3.11-devel
+
+# ---------- PostgreSQL (metadatos de Airflow) ----------
+postgresql-setup --initdb
+sed -i -E 's/^(host\s+all\s+all\s+(127\.0\.0\.1\/32|::1\/128)\s+)ident/\1scram-sha-256/' /var/lib/pgsql/data/pg_hba.conf
+systemctl enable --now postgresql
+DB_PASS=$(openssl rand -hex 16)
+sudo -u postgres psql -c "CREATE USER airflow WITH PASSWORD '$DB_PASS';"
+sudo -u postgres psql -c "CREATE DATABASE airflow OWNER airflow;"
+
+# ---------- Usuario y virtualenv ----------
+useradd --system --create-home --home-dir $AIRFLOW_HOME --shell /bin/bash airflow || true
+mkdir -p $PIPELINE_HOME && chown airflow:airflow $PIPELINE_HOME
+python3.11 -m venv $AIRFLOW_HOME/venv
+CONSTRAINTS="https://raw.githubusercontent.com/apache/airflow/constraints-${airflow_version}/constraints-3.11.txt"
+$AIRFLOW_HOME/venv/bin/pip install --upgrade pip
+$AIRFLOW_HOME/venv/bin/pip install "apache-airflow[postgres,amazon]==${airflow_version}" \
+    boto3 requests defusedxml pyyaml pyarrow --constraint "$CONSTRAINTS"
+
+# ---------- Entorno compartido por los servicios ----------
+mkdir -p /etc/airflow
+cat > /etc/airflow/airflow.env <<EOF
+AIRFLOW_HOME=$AIRFLOW_HOME
+AIRFLOW__CORE__EXECUTOR=LocalExecutor
+AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:$DB_PASS@127.0.0.1:5432/airflow
+AIRFLOW__CORE__DAGS_FOLDER=$PIPELINE_HOME/dags
+AIRFLOW__CORE__LOAD_EXAMPLES=False
+AIRFLOW__CORE__DEFAULT_TIMEZONE=utc
+AIRFLOW__WEBSERVER__EXPOSE_CONFIG=False
+AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL=60
+AWS_DEFAULT_REGION=$REGION
+DATALAKE_BUCKET=$BUCKET
+NEWS_PIPELINE_HOME=$PIPELINE_HOME
+NEWS_CONFIG_PATH=$PIPELINE_HOME/config/sources.yaml
+GLUE_DATABASE=${glue_database}
+ATHENA_WORKGROUP=${athena_wg}
+PYTHONPATH=$PIPELINE_HOME/src
+NEWS_SCHEDULE="${schedule}"
+EOF
+chmod 600 /etc/airflow/airflow.env && chown airflow:airflow /etc/airflow/airflow.env
+
+# ---------- Sincronización del código desde S3 (artifacts/) ----------
+cat > /etc/systemd/system/news-code-sync.service <<EOF
+[Unit]
+Description=Sincroniza DAGs y código del pipeline desde S3
+[Service]
+Type=oneshot
+User=airflow
+ExecStart=/usr/bin/aws s3 sync s3://$BUCKET/artifacts/news-datalake/ $PIPELINE_HOME/ --delete --region $REGION
+EOF
+cat > /etc/systemd/system/news-code-sync.timer <<EOF
+[Unit]
+Description=Sincroniza el código cada 2 minutos
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=2min
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl start news-code-sync.service
+systemctl enable --now news-code-sync.timer
+
+# ---------- Inicializar Airflow ----------
+ADMIN_PASS=$(aws ssm get-parameter --name "${password_param}" --with-decryption \
+             --query Parameter.Value --output text --region $REGION)
+sudo -u airflow bash -c "set -a; source /etc/airflow/airflow.env; set +a; \
+  $AIRFLOW_HOME/venv/bin/airflow db migrate && \
+  $AIRFLOW_HOME/venv/bin/airflow users create --role Admin --username admin \
+     --password '$ADMIN_PASS' --firstname Admin --lastname Airflow --email admin@example.com && \
+  $AIRFLOW_HOME/venv/bin/airflow pools set datalake_writer 1 'Una sola escritura en Silver/Gold/Glue a la vez'"
+
+# Atajo para usar la CLI de Airflow y del pipeline desde la sesión SSM:  sudo -iu airflow  ->  af dags list
+cat > /etc/profile.d/news-datalake.sh <<'EOP'
+set -a; [ -r /etc/airflow/airflow.env ] && . /etc/airflow/airflow.env; set +a
+alias af="/opt/airflow/venv/bin/airflow"
+alias py="/opt/airflow/venv/bin/python"
+EOP
+
+for svc in webserver scheduler; do
+cat > /etc/systemd/system/airflow-$svc.service <<EOF
+[Unit]
+Description=Airflow $svc
+After=network.target postgresql.service
+Wants=postgresql.service
+[Service]
+User=airflow
+EnvironmentFile=/etc/airflow/airflow.env
+ExecStart=$AIRFLOW_HOME/venv/bin/airflow $svc
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+EOF
+done
+systemctl daemon-reload
+systemctl enable --now airflow-scheduler airflow-webserver
+echo "Bootstrap completo"

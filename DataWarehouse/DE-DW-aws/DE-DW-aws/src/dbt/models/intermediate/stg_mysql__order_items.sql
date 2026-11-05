@@ -1,0 +1,18 @@
+-- Versión más reciente de cada llave entre todos los lotes cargados en raw_data.
+with latest as (
+    {{ latest_per_key(source('mysql_raw', 'mysql_order_items'), 'order_item_id') }}
+)
+
+select
+    cast(order_item_id as bigint) as order_item_id,
+    cast(order_id as bigint) as order_id,
+    cast(product_id as bigint) as product_id,
+    cast(quantity as integer) as quantity,
+    cast(unit_price as decimal(12, 2)) as unit_price,
+    cast(subtotal as decimal(14, 2)) as subtotal,
+    _batch_id,
+    _first_batch_id,
+    _extracted_at,
+    _loaded_at,
+    _source
+from latest
